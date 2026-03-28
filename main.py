@@ -7,7 +7,7 @@ from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
 
-"""[2026-03-28 12:30:13.871] [Core] [DBUG] [aiocqhttp.aiocqhttp_platform_adapter:129]: [aiocqhttp] RawMessage <Event, {'time': 1774672213, 'self_id': 3225095075, 'post_type': 'notice', 'group_id': 651906887, 'user_id': 3513785608, 'notice_type': 'group_decrease', 'sub_type': 'leave', 'operator_id': 0}>"""
+# [2026-03-28 12:30:13.871] [Core] [DBUG] [aiocqhttp.aiocqhttp_platform_adapter:129]: [aiocqhttp] 原始消息 <Event, {'time': 1774672213, 'self_id': 3225095075, 'post_type': 'notice', 'group_id': 651906887, 'user_id': 3513785608, 'notice_type': 'group_decrease', 'sub_type': 'leave', 'operator_id': 0}>
 
 @register(
     "NullDox",
@@ -52,34 +52,35 @@ IP地址：{self._generate_ip()}
         return output.strip()
 
     def _load_location_data(self) -> None:
-        """Load location JSON into memory and flatten it for random selection."""
+        """将位置JSON加载到内存中并扁平化以便随机选择"""
         data_path = Path(__file__).resolve().parent / "china_clean_v2.json"
         try:
             if not data_path.exists():
-                logger.warning(f"[NullDox] Location file not found: {data_path}")
+                logger.warning(f"[NullDox] 位置文件不存在: {data_path}")
                 return
 
             with data_path.open("r", encoding="utf-8") as file:
                 self.location_data = json.load(file)
 
             if not isinstance(self.location_data, dict):
-                logger.warning("[NullDox] Location data format is invalid, expected dict.")
+                logger.warning("[NullDox] 位置数据格式无效，预期为字典类型")
                 self.location_data = {}
                 return
 
             self.location_pool = self._flatten_locations(self.location_data)
-            logger.info(f"[NullDox] Loaded {len(self.location_pool)} locations into memory.")
+            logger.info(f"[NullDox] 已加载 {len(self.location_pool)} 个位置信息到内存")
         except json.JSONDecodeError as exc:
-            logger.error(f"[NullDox] Failed to parse location JSON: {exc}")
+            logger.error(f"[NullDox] 解析位置JSON文件失败: {exc}")
             self.location_data = {}
             self.location_pool = []
         except Exception as exc:
-            logger.error(f"[NullDox] Failed to load location data: {exc}")
+            logger.error(f"[NullDox] 加载位置数据失败: {exc}")
             self.location_data = {}
             self.location_pool = []
 
+    # 扁平化
     def _flatten_locations(self, data: dict) -> list[str]:
-        """Flatten nested location JSON into readable addresses."""
+        """将嵌套的位置JSON扁平化为可读地址"""
         locations: list[str] = []
         for provinces in data.values():
             if not isinstance(provinces, dict):
@@ -105,7 +106,7 @@ IP地址：{self._generate_ip()}
 
         return locations
 
-    # 检测qq号是否合法
+    # 检测QQ号是否合法
     def _validate_qq(self, qq: str) -> bool:
         """验证QQ号是否合法（只包含数字）"""
         if not qq or not isinstance(qq, str):
@@ -156,7 +157,7 @@ IP地址：{self._generate_ip()}
         suffix = "".join(str(random.randint(0, 9)) for _ in range(8))
         return f"{prefix}{suffix}"
 
-    # 生成ip号
+    # 生成IP地址
     def _generate_ip(self) -> str:
         """生成假的 IP 地址"""
         # 保留一些私有 IP 段作为假数据更真实
@@ -169,19 +170,19 @@ IP地址：{self._generate_ip()}
         fourth = random.randint(1, 254)
         return f"{first}.{second}.{third}.{fourth}"
 
-    # 生成ip号
+    # 生成地理位置
     def _generate_location(self) -> str:
-        """生成地名"""
+        """随机生成地理位置"""
         if self.location_pool:
             return random.choice(self.location_pool)
         return "四川省成都市金牛区"
 
-    # 初始化
+    # 初始化插件
     async def initialize(self):
-        """可选择实现异步的插件初始化方法，当实例化该插件类之后会自动调用该方法。"""
+        """可选择实现异步的插件初始化方法，当实例化该插件类之后会自动调用该方法"""
         pass
 
-    # 清理垃圾
+    # 清理资源
     async def terminate(self):
-        """可选择实现异步的插件销毁方法，当插件被卸载/停用时会调用。"""
+        """可选择实现异步的插件销毁方法，当插件被卸载/停用时会被调用"""
         pass
