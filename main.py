@@ -48,11 +48,18 @@ class NullDoxPlugin(Star):
         self._load_location_data()
 
     @filter.command("盒")
-    async def use_dox(self, event: AstrMessageEvent, qq: str):
+    async def use_dox(self, event: AstrMessageEvent, qq: str|None=None):
         """使用/盒 [qq] 主动盒群友"""
-        if not self._validate_qq(qq):
-            yield event.plain_result("QQ号格式错误，请使用纯数字")
-            return
+        target_id = None
+        for component in event.message_obj.message:
+            if isinstance(component, Comp.At):
+                target_id = str(component.qq)
+                break
+        if not target_id:
+            if not self._validate_qq(qq):
+                yield event.plain_result("QQ号格式错误，请使用纯数字")
+                return
+        qq = target_id
         yield event.plain_result(f"🚨 开始对 {qq} 进行盒打击")
         output_text = self.generate_fake_dox(qq)
         wife_avatar = f"https://q4.qlogo.cn/headimg_dl?dst_uin={qq}&spec=640"
