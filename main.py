@@ -49,6 +49,7 @@ class NullDoxPlugin(Star):
 
     @filter.command("盒")
     async def use_dox(self, event: AstrMessageEvent, qq: str):
+        """使用/盒 [qq] 主动盒群友"""
         if not self._validate_qq(qq):
             yield event.plain_result("QQ号格式错误，请使用纯数字")
             return
@@ -64,6 +65,7 @@ class NullDoxPlugin(Star):
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
     @register_decrease_type()
     async def decrease_dox(self, event: AstrMessageEvent):
+        """监听所有退群聊消息"""
         group_id = event.get_group_id()
         sender_id = str(event.get_sender_id())
         is_group = group_id is not None
