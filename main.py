@@ -7,7 +7,32 @@ from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
 
-# [2026-03-28 12:30:13.871] [Core] [DBUG] [aiocqhttp.aiocqhttp_platform_adapter:129]: [aiocqhttp] 原始消息 <Event, {'time': 1774672213, 'self_id': 3225095075, 'post_type': 'notice', 'group_id': 651906887, 'user_id': 3513785608, 'notice_type': 'group_decrease', 'sub_type': 'leave', 'operator_id': 0}>
+from astrbot.core.star.filter import HandlerFilter
+from astrbot.core.star.register.star_handler import get_handler_or_create
+from astrbot.core.star.star_handler import EventType
+from astrbot.core.config import AstrBotConfig
+
+class DecreaseTypeFilter(HandlerFilter):
+    """检查主动退群事件"""
+    def filter(self, event: AstrMessageEvent, cfg: AstrBotConfig) -> bool:
+        raw_message = getattr(event.message_obj, "raw_message", None)
+        if not isinstance(raw_message, dict):
+            return False
+        return (
+                raw_message.get('post_type', None) == 'notice' and
+                raw_message.get('notice_type', None) == 'group_decrease' and
+                raw_message.get('sub_type', None) == 'leave'
+        )
+
+def register_decrease_type(**kwargs):
+    """注册一个 PackTypeFilter"""
+    def decorator(awaitable):
+        handler_md = get_handler_or_create(awaitable, EventType.AdapterMessageEvent)
+        handler_md.event_filters.append(
+            DecreaseTypeFilter(),
+        )
+        return awaitable
+    return decorator
 
 @register(
     "NullDox",
@@ -36,19 +61,39 @@ class NullDoxPlugin(Star):
         ]
         yield event.chain_result(chain)
 
+    @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
+    @register_decrease_type()
+    async def decrease_dox(self, event: AstrMessageEvent):
+        group_id = event.get_group_id()
+        sender_id = str(event.get_sender_id())
+        sender_name = event.get_sender_name()
+        is_group = group_id is not None
+        if not is_group:
+            return
+        output_text = self.generate_fake_dox(
+            sender_id,
+            sender_name,
+            str(group_id)
+        )
+        wife_avatar = f"https://q4.qlogo.cn/headimg_dl?dst_uin={sender_id}&spec=640"
+        chain = [
+            Comp.Plain(output_text),
+            Comp.Image.fromURL(wife_avatar),
+        ]
+        yield event.chain_result(chain)
+
     # 生成假数据
-    def generate_fake_dox(self, target_id:str):
+    def generate_fake_dox(self, sender_id:str, sender_name:str|None = None, group_id:str|None = None):
         """
         生成完整的假开盒信息
         target_id: 目标账号（可以是任意字符串）
         """
-        output = f"""
-身份检索完毕
-账号：{target_id}
-手机：{self._generate_phone()}
-IP地址：{self._generate_ip()}
-物理地址："{self._generate_location()}"
-"""
+        output = f"身份检索完毕\n账号：{sender_id}\n"
+        if sender_name:
+            output += f"名称：{sender_name}\n"
+        if group_id:
+            output += f"退出群聊：{group_id}\n"
+        output += f"手机：{self._generate_phone()}\nIP地址：{self._generate_ip()}\n物理地址：{self._generate_location()}"
         return output.strip()
 
     def _load_location_data(self) -> None:
