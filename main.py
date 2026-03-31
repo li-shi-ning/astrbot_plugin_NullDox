@@ -54,12 +54,10 @@ class NullDoxPlugin(Star):
     @filter.command("\u76d2")
     async def use_dox(self, event: AstrMessageEvent, qq: str):
         """Use /盒 [qq] to generate fake dox information."""
-        group_id = event.get_group_id()
-        if group_id and not self._is_group_allowed(
-            group_id, getattr(event, "unified_msg_origin", None)
-        ):
+        sender_id = event.get_sender_id()
+        if sender_id and not self._is_user_allowed(str(sender_id)):
             yield event.plain_result(
-                "\u5f53\u524d\u7fa4\u672a\u542f\u7528\u8be5\u529f\u80fd"
+                "\u5f53\u524d\u8d26\u53f7\u672a\u542f\u7528\u8be5\u529f\u80fd"
             )
             return
 
@@ -194,10 +192,29 @@ class NullDoxPlugin(Star):
             return False
         return True
 
+    def _is_user_allowed(self, user_id: str | None) -> bool:
+        """Check whether the current user is allowed to use the command."""
+        if not user_id:
+            return True
+
+        mode = str(self.config.get("user_list_mode", "none")).lower()
+        if mode not in {"whitelist", "blacklist", "none"}:
+            mode = "none"
+        if mode == "none":
+            return True
+
+        user_list = {str(item) for item in self.config.get("user_list", [])}
+        is_in_list = str(user_id) in user_list
+        if mode == "whitelist":
+            return is_in_list
+        if mode == "blacklist":
+            return not is_in_list
+        return True
+
     def _is_group_allowed(
         self, group_id: int | str | None, unified_msg_origin: str | None = None
     ) -> bool:
-        """Check whether the group is allowed by group filter settings."""
+        """Check whether leave-group monitoring is allowed in this group."""
         if not group_id:
             return True
 

@@ -1,0 +1,42 @@
+﻿{
+  "user_list_mode": {
+    "description": "主动命令账号过滤模式",
+    "type": "string",
+    "options": [
+      "whitelist",
+      "blacklist",
+      "none"
+    ],
+    "default": "none",
+    "hint": "whitelist: 仅允许列表内账号使用 /盒；blacklist: 拒绝列表内账号使用 /盒；none: 不限制。"
+  },
+  "user_list": {
+    "type": "list",
+    "description": "主动命令账号白名单/黑名单列表",
+    "default": [],
+    "hint": "用于控制哪些账号可以使用 /盒 指令。请填写用户账号 ID（如 QQ 号）。",
+    "items": {
+      "type": "string"
+    }
+  },
+  "group_list_mode": {
+    "description": "退群监听群聊过滤模式",
+    "type": "string",
+    "options": [
+      "whitelist",
+      "blacklist",
+      "none"
+    ],
+    "default": "none",
+    "hint": "whitelist: 仅监听列表内群聊的退群事件；blacklist: 不监听列表内群聊；none: 不限制。"
+  },
+  "group_list": {
+    "type": "list",
+    "description": "退群监听群组白名单/黑名单列表",
+    "default": [],
+    "hint": "用于控制哪些群会触发退群监听逻辑。支持填写 AstrBot UMO（如 xxxxx:GroupMessage:123456）或纯群号（如 123456，会自动匹配）。可使用 /sid 查看当前会话的 UMO。",
+    "items": {
+      "type": "string"
+    }
+  }
+}
