@@ -13,7 +13,7 @@ from astrbot.core.star.star_handler import EventType
 
 
 class DecreaseTypeFilter(HandlerFilter):
-    """Check active leave-group notice events."""
+    """检查活跃的群成员减少通知事件"""
 
     def filter(self, event: AstrMessageEvent, cfg: AstrBotConfig) -> bool:
         raw_message = getattr(event.message_obj, "raw_message", None)
@@ -27,7 +27,7 @@ class DecreaseTypeFilter(HandlerFilter):
 
 
 def register_decrease_type(**kwargs):
-    """Register a custom filter for leave-group events."""
+    """注册一个用于群成员离开事件的自定义过滤器"""
 
     def decorator(awaitable):
         handler_md = get_handler_or_create(awaitable, EventType.AdapterMessageEvent)
@@ -40,25 +40,25 @@ def register_decrease_type(**kwargs):
 @register(
     "NullDox",
     "lishining",
-    "Generate fake user information for fun.",
+    "生成虚假用户信息，仅供娱乐。",
     "1.0.0",
 )
 class NullDoxPlugin(Star):
+    """开盒插件：生成虚假的用户信息"""
+
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
         super().__init__(context)
         self.config = config or {}
-        self.location_data: dict = {}
-        self.location_pool: list[str] = []
+        self.location_data: dict = {}      # 地理位置数据
+        self.location_pool: list[str] = [] # 地理位置池
         self._load_location_data()
 
-    @filter.command("\u76d2")
+    @filter.command("盒")
     async def use_dox(self, event: AstrMessageEvent, qq: str):
-        """Use /盒 [qq] to generate fake dox information."""
+        """使用 /盒 [QQ号] 生成虚假开盒信息"""
         sender_id = event.get_sender_id()
         if sender_id and not self._is_user_allowed(str(sender_id)):
-            yield event.plain_result(
-                "\u5f53\u524d\u8d26\u53f7\u672a\u542f\u7528\u8be5\u529f\u80fd"
-            )
+            yield event.plain_result("当前账号未启用该功能")
             return
 
         target_id = None
@@ -70,14 +70,11 @@ class NullDoxPlugin(Star):
         if target_id is None:
             qq = str(qq)
             if not self._validate_qq(qq):
-                yield event.plain_result(
-                    "QQ\u53f7\u683c\u5f0f\u9519\u8bef\uff0c\u8bf7\u4f7f\u7528\u7eaf\u6570\u5b57"
-                )
+                yield event.plain_result("QQ号格式错误，请使用纯数字")
                 return
         else:
             qq = target_id
-
-        yield event.plain_result(f"\u5f00\u59cb\u5bf9 {qq} \u8fdb\u884c\u5f00\u76d2")
+        yield event.plain_result(f"🚨 开始对 {qq} 进行盒打击")
         output_text = self.generate_fake_dox(qq)
         avatar = f"https://q4.qlogo.cn/headimg_dl?dst_uin={qq}&spec=640"
         chain = [
@@ -89,19 +86,18 @@ class NullDoxPlugin(Star):
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
     @register_decrease_type()
     async def decrease_dox(self, event: AstrMessageEvent):
-        """Listen for leave-group events and generate fake dox output."""
+        """监听群成员离开事件，生成虚假开盒信息"""
         group_id = event.get_group_id()
         sender_id = str(event.get_sender_id())
         if group_id is None:
             return
+
         if not self._is_group_allowed(
             group_id, getattr(event, "unified_msg_origin", None)
         ):
             return
 
-        yield event.plain_result(
-            f"\u68c0\u6d4b\u5230 {sender_id} \u9000\u51fa\u7fa4\u804a\uff0c\u6b63\u5728\u8fdb\u884c\u5f00\u76d2"
-        )
+        yield event.plain_result(f"🚨 检测到 {sender_id} 退出群聊，正在进行开盒")
         output_text = self.generate_fake_dox(sender_id, str(group_id))
         avatar = f"https://q4.qlogo.cn/headimg_dl?dst_uin={sender_id}&spec=640"
         chain = [
@@ -110,50 +106,55 @@ class NullDoxPlugin(Star):
         ]
         yield event.chain_result(chain)
 
-    def generate_fake_dox(self, sender_id: str, group_id: str | None = None) -> str:
-        """Generate fake dox information."""
-        output = "\u8eab\u4efd\u68c0\u7d22\u5b8c\u6bd5\n"
-        output += f"\u8d26\u53f7\uff1a{sender_id}\n"
+    def generate_fake_dox(self, sender_id: str, group_id: str | None = None):
+        """
+        生成完整的假开盒信息
+        sender_id: 发送者账号
+        group_id: 群号（可选）
+        """
+        output = f"🔍 身份检索完毕\n"
+        output += f"🆔 账号：{sender_id}\n"
 
         if group_id:
-            output += f"\u9000\u51fa\u7fa4\u804a\uff1a{group_id}\n"
+            output += f"🚪 退出群聊：{group_id}\n"
 
-        output += f"\u624b\u673a\uff1a{self._generate_phone()}\n"
-        output += f"IP\u5730\u5740\uff1a{self._generate_ip()}\n"
-        output += f"\u7269\u7406\u5730\u5740\uff1a{self._generate_location()}"
+        output += f"📱 手机：{self._generate_phone()}\n"
+        output += f"🌐 IP地址：{self._generate_ip()}\n"
+        output += f"📍 物理地址：{self._generate_location()}"
+
         return output.strip()
 
     def _load_location_data(self) -> None:
-        """Load location JSON and flatten it for random selection."""
+        """加载地理位置JSON数据，并展开为扁平列表"""
         data_path = Path(__file__).resolve().parent / "china_clean_v2.json"
         try:
             if not data_path.exists():
-                logger.warning(f"[NullDox] Location file not found: {data_path}")
+                logger.warning(f"[NullDox] 未找到地理位置文件：{data_path}")
                 return
 
             with data_path.open("r", encoding="utf-8") as file:
                 self.location_data = json.load(file)
 
             if not isinstance(self.location_data, dict):
-                logger.warning("[NullDox] Invalid location data format, expected dict")
+                logger.warning("[NullDox] 地理位置数据格式无效，应为字典类型")
                 self.location_data = {}
                 return
 
             self.location_pool = self._flatten_locations(self.location_data)
             logger.info(
-                f"[NullDox] Loaded {len(self.location_pool)} locations into memory"
+                f"[NullDox] 已加载 {len(self.location_pool)} 条地理位置数据"
             )
         except json.JSONDecodeError as exc:
-            logger.error(f"[NullDox] Failed to parse location JSON: {exc}")
+            logger.error(f"[NullDox] 解析地理位置JSON失败：{exc}")
             self.location_data = {}
             self.location_pool = []
         except Exception as exc:
-            logger.error(f"[NullDox] Failed to load location data: {exc}")
+            logger.error(f"[NullDox] 加载地理位置数据失败：{exc}")
             self.location_data = {}
             self.location_pool = []
 
     def _flatten_locations(self, data: dict) -> list[str]:
-        """Flatten nested location JSON into readable addresses."""
+        """将嵌套的地理位置JSON展开为可读地址列表"""
         locations: list[str] = []
         for provinces in data.values():
             if not isinstance(provinces, dict):
@@ -184,16 +185,16 @@ class NullDoxPlugin(Star):
         return locations
 
     def _validate_qq(self, qq: str) -> bool:
-        """Validate QQ number format."""
+        """验证QQ号格式是否正确"""
         if not qq or not isinstance(qq, str):
             return False
         if not qq.isdigit():
-            logger.warning(f"Detected invalid QQ format: {qq}")
+            logger.warning(f"检测到无效的QQ格式：{qq}")
             return False
         return True
 
     def _is_user_allowed(self, user_id: str | None) -> bool:
-        """Check whether the current user is allowed to use the command."""
+        """检查当前用户是否有权限使用该命令"""
         if not user_id:
             return True
 
@@ -214,7 +215,7 @@ class NullDoxPlugin(Star):
     def _is_group_allowed(
         self, group_id: int | str | None, unified_msg_origin: str | None = None
     ) -> bool:
-        """Check whether leave-group monitoring is allowed in this group."""
+        """检查是否允许在该群组中监听成员离开事件"""
         if not group_id:
             return True
 
@@ -256,86 +257,38 @@ class NullDoxPlugin(Star):
         return True
 
     def _generate_phone(self) -> str:
-        """Generate a fake phone number."""
+        """生成一个虚假的手机号码"""
         prefixes = [
-            "130",
-            "131",
-            "132",
-            "133",
-            "135",
-            "136",
-            "137",
-            "138",
-            "139",
-            "150",
-            "151",
-            "152",
-            "155",
-            "156",
-            "157",
-            "158",
-            "159",
-            "166",
-            "177",
-            "180",
-            "181",
-            "182",
-            "183",
-            "184",
-            "185",
-            "186",
-            "187",
-            "188",
-            "189",
-            "198",
-            "199",
+            "130", "131", "132", "133", "135", "136", "137", "138", "139",
+            "150", "151", "152", "155", "156", "157", "158", "159",
+            "166", "177", "180", "181", "182", "183", "184", "185",
+            "186", "187", "188", "189", "198", "199"
         ]
         prefix = random.choice(prefixes)
         suffix = "".join(str(random.randint(0, 9)) for _ in range(8))
         return f"{prefix}{suffix}"
 
     def _generate_ip(self) -> str:
-        """Generate a fake IP address."""
-        first = random.choice(
-            [
-                58,
-                61,
-                110,
-                112,
-                113,
-                114,
-                115,
-                116,
-                117,
-                118,
-                119,
-                120,
-                121,
-                122,
-                123,
-                124,
-                125,
-                126,
-                127,
-                172,
-                192,
-            ]
-        )
+        """生成一个虚假的IP地址"""
+        first = random.choice([
+            58, 61, 110, 112, 113, 114, 115, 116, 117, 118, 119,
+            120, 121, 122, 123, 124, 125, 126, 127, 172, 192
+        ])
         second = random.randint(1, 255)
         third = random.randint(0, 255)
         fourth = random.randint(1, 254)
         return f"{first}.{second}.{third}.{fourth}"
 
     def _generate_location(self) -> str:
-        """Generate a random fake location."""
+        """生成一个随机的虚假地理位置"""
         if self.location_pool:
             return random.choice(self.location_pool)
-        return "\u56db\u5ddd\u7701\u6210\u90fd\u5e02\u91d1\u725b\u533a"
+        return "四川省成都市金牛区"  # 默认地址
 
     async def initialize(self):
-        """Optional async plugin initialization hook."""
+        """可选的异步插件初始化钩子"""
         pass
 
     async def terminate(self):
-        """Optional async plugin cleanup hook."""
+        """可选的异步插件清理钩子"""
         pass
