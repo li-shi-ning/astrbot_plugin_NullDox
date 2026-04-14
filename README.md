@@ -93,7 +93,6 @@ A: 请确保：
 - 生成手机号、IP地址等信息
 
 ## 👤 作者
-- **lishining**
-- **QQ群:1083090761**
+- **不认识**
 
-[![Moe Counter](https://count.getloli.com/get/@li-shi-ling?theme=minecraft)](https://github.com/Li-shi-ling/astrbot_plugin_NullDox)
+[![Moe Counter](https://count.getloli.com/get/@li-shi-ling?theme=minecraft)](https://github.com/Li-shi-ning/astrbot_plugin_NullDox)
