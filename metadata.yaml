@@ -1,8 +1,8 @@
 name: astrbot_plugin_NullDox
 display_name: 群盒威慑
 desc: 一定要组一辈子群聊!在群友退群时进行开盒(数据是伪造的)。
-version: v1.0.2
+version: v1.0.3
 author: lishining
-repo: https://github.com/Li-shi-ling/astrbot_plugin_NullDox
+repo: https://github.com/Li-shi-ning/astrbot_plugin_NullDox
 support_platforms:
   - aiocqhttp
