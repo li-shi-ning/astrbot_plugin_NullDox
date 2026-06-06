@@ -48,7 +48,7 @@ class NullDoxPlugin(Star):
         self._load_location_data()
 
     @filter.command("盒")
-    async def use_dox(self, event: AstrMessageEvent, qq: str):
+    async def use_dox(self, event: AstrMessageEvent, qq: str = ""):
         """使用 /盒 [QQ号] 生成虚假开盒信息"""
         sender_id = event.get_sender_id()
         if sender_id and not self._is_user_allowed(str(sender_id)):
@@ -59,8 +59,7 @@ class NullDoxPlugin(Star):
         for component in event.message_obj.message:
             if isinstance(component, Comp.At):
                 target_id = str(component.qq)
-                break
-
+        
         if target_id is None:
             qq = str(qq)
             if not self._validate_qq(qq):
