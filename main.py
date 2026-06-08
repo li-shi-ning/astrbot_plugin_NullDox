@@ -245,6 +245,68 @@ class NullDoxPlugin(Star):
             return ""
         return str(random.choice(list(streets.keys())))
 
+    def _resolve_target_qq(self, event: AstrMessageEvent, qq: str = "") -> str | None:
+        """解析开盒目标：显式QQ优先，其次选择非bot的@目标。"""
+        qq_candidate = str(qq or "").strip()
+        if qq_candidate:
+            if self._validate_qq(qq_candidate):
+                logger.info(f"[NullDox] 目标解析：使用显式QQ参数 {qq_candidate}")
+                return qq_candidate
+            logger.warning(f"[NullDox] 目标解析：显式QQ参数无效 {qq_candidate}")
+
+        mentioned_ids = self._extract_target_mentions(event)
+        if mentioned_ids:
+            target_id = mentioned_ids[-1]
+            logger.info(f"[NullDox] 目标解析：使用最后一个非bot @目标 {target_id}")
+            return target_id
+
+        logger.warning("[NullDox] 目标解析失败：未找到有效QQ参数或非bot @目标")
+        return None
+
+    def _extract_target_mentions(self, event: AstrMessageEvent) -> list[str]:
+        """提取消息中的@目标，跳过@全体和机器人自身。"""
+        self_ids = self._get_bot_self_ids(event)
+        targets: list[str] = []
+        for component in event.message_obj.message:
+            if not isinstance(component, Comp.At):
+                continue
+            mentioned_id = str(component.qq).strip()
+            if not mentioned_id or mentioned_id.lower() == "all":
+                logger.info("[NullDox] 目标解析：跳过@全体")
+                continue
+            if mentioned_id in self_ids:
+                logger.info(f"[NullDox] 目标解析：跳过bot自身@ {mentioned_id}")
+                continue
+            if not self._validate_qq(mentioned_id):
+                logger.warning(f"[NullDox] 目标解析：跳过无效@目标 {mentioned_id}")
+                continue
+            targets.append(mentioned_id)
+        return targets
+
+    def _get_bot_self_ids(self, event: AstrMessageEvent) -> set[str]:
+        """尽量从事件对象中取机器人自身ID，用于过滤唤醒@。"""
+        self_ids: set[str] = set()
+        raw_message = getattr(event.message_obj, "raw_message", None)
+        if isinstance(raw_message, dict):
+            self_id = raw_message.get("self_id")
+            if self_id:
+                self_ids.add(str(self_id))
+
+        message_self_id = getattr(event.message_obj, "self_id", None)
+        if message_self_id:
+            self_ids.add(str(message_self_id))
+
+        get_self_id = getattr(event, "get_self_id", None)
+        if callable(get_self_id):
+            try:
+                self_id = get_self_id()
+            except Exception as exc:
+                logger.debug(f"[NullDox] 目标解析：读取event.get_self_id失败 {exc}")
+            else:
+                if self_id:
+                    self_ids.add(str(self_id))
+        return self_ids
+
     # 验证QQ号格式是否正确
     def _validate_qq(self, qq: str) -> bool:
         """验证QQ号格式是否正确"""
