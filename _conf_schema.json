@@ -71,14 +71,20 @@
           "酒店",
           "学校",
           "医院",
-          "地铁站",
           "景点",
-          "美食"
+          "美食",
+          "超市"
         ],
         "hint": "每次会从列表中随机选一个关键词，在随机城市内搜索地点。建议每个关键词只写一个检索词。",
         "items": {
           "type": "string"
         }
+      },
+      "place_search_retry_keywords": {
+        "description": "地点搜索关键词重试数量",
+        "type": "int",
+        "default": 4,
+        "hint": "随机地区下一个关键词无结果时，会继续尝试其它关键词。范围从1到关键词列表长度。"
       },
       "place_search_page_size": {
         "description": "地点搜索候选数量",
@@ -97,6 +103,12 @@
         "type": "string",
         "default": "500x400",
         "hint": "格式为 宽x高，例如 500x400。"
+      },
+      "static_map_marker_style": {
+        "description": "静态地图位置标记样式",
+        "type": "string",
+        "default": "size:large|color:red",
+        "hint": "会拼接为 markers=<样式>|纬度,经度，例如 size:large|color:red。留空则不添加位置标记。"
       },
       "tencent_api_timeout": {
         "description": "腾讯地图接口超时时间",

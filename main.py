@@ -21,7 +21,7 @@ from astrbot.core.star.star_handler import EventType
 TENCENT_MAP_API_BASE = "https://apis.map.qq.com"
 TENCENT_MAP_PLACE_SEARCH_PATH = "/ws/place/v1/search"
 TENCENT_MAP_STATIC_PATH = "/ws/staticmap/v2/"
-DEFAULT_PLACE_KEYWORDS = ["公园", "商场", "酒店", "学校", "医院", "地铁站", "景点", "美食"]
+DEFAULT_PLACE_KEYWORDS = ["公园", "商场", "酒店", "学校", "医院", "景点", "美食", "超市"]
 
 
 @dataclass(frozen=True)
@@ -77,18 +77,10 @@ class NullDoxPlugin(Star):
             yield event.plain_result("当前账号未启用该功能")
             return
 
-        target_id = None
-        for component in event.message_obj.message:
-            if isinstance(component, Comp.At):
-                target_id = str(component.qq)
-        
-        if target_id is None:
-            qq = str(qq)
-            if not self._validate_qq(qq):
-                yield event.plain_result("QQ号格式错误，请使用纯数字")
-                return
-        else:
-            qq = target_id
+        qq = self._resolve_target_qq(event, qq)
+        if not qq:
+            yield event.plain_result("QQ号格式错误，请使用纯数字或@目标用户")
+            return
         yield event.plain_result(f"🚨 开始对 {qq} 进行盒打击")
         output_text, map_url = await self.generate_fake_dox(qq)
         avatar = f"https://q4.qlogo.cn/headimg_dl?dst_uin={qq}&spec=640"
@@ -144,8 +136,6 @@ class NullDoxPlugin(Star):
         output += f"📱 手机：{self._generate_phone()}\n"
         output += f"🌐 IP地址：{self._generate_ip()}\n"
         output += f"📍 物理地址：{location.address}"
-        if location.map_url:
-            output += "\n🗺️ 已生成位置静态图"
 
         return output.strip(), location.map_url
 
@@ -358,10 +348,9 @@ class NullDoxPlugin(Star):
     # 生成一个随机的虚假地理位置
     async def _generate_location(self) -> GeneratedLocation:
         """生成一个随机的虚假地理位置，可选叠加真实POI和静态地图。"""
-        fallback_address = self._generate_fallback_location()
         if not self._is_map_enrichment_enabled():
             logger.info("[NullDox] 地图增强未启用，使用本地随机地址")
-            return GeneratedLocation(fallback_address)
+            return GeneratedLocation(self._generate_fallback_location())
 
         api_key = self._get_tencent_map_key()
         secret_key = self._get_tencent_map_sk()
@@ -371,12 +360,12 @@ class NullDoxPlugin(Star):
         )
         if not api_key:
             logger.warning("[NullDox] 已启用地图增强，但未配置 tencent_map_key")
-            return GeneratedLocation(fallback_address)
+            return GeneratedLocation(self._generate_fallback_location())
 
         region = self._pick_search_region()
         if not region:
             logger.warning("[NullDox] 地图增强回退：未加载到可搜索地区")
-            return GeneratedLocation(fallback_address)
+            return GeneratedLocation(self._generate_fallback_location())
         logger.info(
             f"[NullDox] 地图增强选择地区：search_region={region['region']}, "
             f"fallback_prefix={region['prefix']}"
@@ -438,58 +427,67 @@ class NullDoxPlugin(Star):
         self, api_key: str, region_name: str
     ) -> dict | None:
         """在随机地区内搜索一个POI。"""
-        keyword = self._pick_place_keyword()
         page_size = self._get_int_config("place_search_page_size", 10, 1, 20)
-        logger.info(
-            f"[NullDox] 开始腾讯地点搜索：region={region_name}, "
-            f"keyword={keyword}, page_size={page_size}"
-        )
-        params = {
-            "key": api_key,
-            "keyword": keyword,
-            "boundary": f"region({region_name},1)",
-            "page_size": str(page_size),
-            "page_index": "1",
-            "output": "json",
-        }
-        url = self._build_tencent_get_url(TENCENT_MAP_PLACE_SEARCH_PATH, params)
-        logger.info(f"[NullDox] 腾讯地点搜索URL：{self._redact_url(url)}")
-
-        try:
-            payload = await self._http_get_json(url)
-        except Exception as exc:
-            logger.warning(f"[NullDox] 腾讯地点搜索失败：{exc}")
-            return None
-
-        if not isinstance(payload, dict) or payload.get("status") != 0:
-            logger.warning(
-                "[NullDox] 腾讯地点搜索返回异常："
-                f"payload={self._summarize_api_payload(payload)}"
+        keywords = self._pick_place_keywords_for_search()
+        for attempt, keyword in enumerate(keywords, start=1):
+            logger.info(
+                f"[NullDox] 开始腾讯地点搜索：region={region_name}, "
+                f"keyword={keyword}, page_size={page_size}, "
+                f"attempt={attempt}/{len(keywords)}"
             )
-            return None
+            params = {
+                "key": api_key,
+                "keyword": keyword,
+                "boundary": f"region({region_name},1)",
+                "page_size": str(page_size),
+                "page_index": "1",
+                "output": "json",
+            }
+            url = self._build_tencent_get_url(TENCENT_MAP_PLACE_SEARCH_PATH, params)
+            logger.info(f"[NullDox] 腾讯地点搜索URL：{self._redact_url(url)}")
 
-        pois = payload.get("data")
-        if not isinstance(pois, list) or not pois:
-            logger.warning(
-                "[NullDox] 腾讯地点搜索无结果："
-                f"count={payload.get('count')}, request_id={payload.get('request_id')}"
+            try:
+                payload = await self._http_get_json(url)
+            except Exception as exc:
+                logger.warning(f"[NullDox] 腾讯地点搜索失败：{exc}")
+                return None
+
+            if not isinstance(payload, dict) or payload.get("status") != 0:
+                logger.warning(
+                    "[NullDox] 腾讯地点搜索返回异常："
+                    f"payload={self._summarize_api_payload(payload)}"
+                )
+                return None
+
+            pois = payload.get("data")
+            if not isinstance(pois, list) or not pois:
+                logger.warning(
+                    "[NullDox] 腾讯地点搜索无结果："
+                    f"keyword={keyword}, count={payload.get('count')}, "
+                    f"request_id={payload.get('request_id')}"
+                )
+                continue
+            valid_pois = [poi for poi in pois if isinstance(poi, dict)]
+            if not valid_pois:
+                logger.warning("[NullDox] 腾讯地点搜索结果格式异常：data中没有有效POI对象")
+                continue
+            selected = random.choice(valid_pois)
+            logger.info(
+                "[NullDox] 腾讯地点搜索命中："
+                f"request_id={payload.get('request_id')}, count={payload.get('count')}, "
+                f"valid_pois={len(valid_pois)}, selected_id={selected.get('id')}, "
+                f"selected_title={selected.get('title')}, keyword={keyword}"
             )
-            return None
-        valid_pois = [poi for poi in pois if isinstance(poi, dict)]
-        if not valid_pois:
-            logger.warning("[NullDox] 腾讯地点搜索结果格式异常：data中没有有效POI对象")
-            return None
-        selected = random.choice(valid_pois)
-        logger.info(
-            "[NullDox] 腾讯地点搜索命中："
-            f"request_id={payload.get('request_id')}, count={payload.get('count')}, "
-            f"valid_pois={len(valid_pois)}, selected_id={selected.get('id')}, "
-            f"selected_title={selected.get('title')}"
-        )
-        return selected
+            return selected
 
-    def _pick_place_keyword(self) -> str:
-        """从配置中选择搜索关键词。"""
+        logger.warning(
+            f"[NullDox] 腾讯地点搜索全部关键词无结果：region={region_name}, "
+            f"keywords={keywords}"
+        )
+        return None
+
+    def _pick_place_keywords_for_search(self) -> list[str]:
+        """从配置中选择本次搜索要尝试的关键词序列。"""
         keywords = self._get_map_config("place_search_keywords", DEFAULT_PLACE_KEYWORDS)
         if not isinstance(keywords, list):
             logger.warning("[NullDox] place_search_keywords 配置不是列表，使用默认关键词")
@@ -498,7 +496,11 @@ class NullDoxPlugin(Star):
         if not normalized:
             logger.warning("[NullDox] place_search_keywords 为空，使用默认关键词")
             normalized = DEFAULT_PLACE_KEYWORDS
-        return random.choice(normalized)
+        random.shuffle(normalized)
+        retry_count = self._get_int_config(
+            "place_search_retry_keywords", 4, 1, len(normalized)
+        )
+        return normalized[:retry_count]
 
     async def _http_get_json(self, url: str) -> dict:
         """在线程中执行阻塞HTTP请求，避免卡住AstrBot事件循环。"""
@@ -545,8 +547,14 @@ class NullDoxPlugin(Star):
 
         zoom = self._get_int_config("static_map_zoom", 17, 4, 18)
         size = str(self._get_map_config("static_map_size", "500x400")).strip() or "500x400"
+        marker_style = (
+            str(self._get_map_config("static_map_marker_style", "size:large|color:red"))
+            .strip()
+            .strip("|")
+        )
         logger.info(
-            f"[NullDox] 构造静态地图：lat={lat}, lng={lng}, zoom={zoom}, size={size}"
+            f"[NullDox] 构造静态地图：lat={lat}, lng={lng}, zoom={zoom}, "
+            f"size={size}, marker_style={marker_style}"
         )
         params = {
             "key": api_key,
@@ -554,6 +562,8 @@ class NullDoxPlugin(Star):
             "zoom": str(zoom),
             "size": size,
         }
+        if marker_style:
+            params["markers"] = f"{marker_style}|{lat},{lng}"
         return self._build_tencent_get_url(TENCENT_MAP_STATIC_PATH, params)
 
     def _build_tencent_get_url(self, path: str, params: dict[str, str]) -> str:

@@ -62,9 +62,11 @@ NullDox 是一个用于 AstrBot 的娱乐插件，通过生成虚构的用户信
 | `tencent_map.tencent_map_key` | 腾讯位置服务 WebService API Key，也可用环境变量 `TENCENT_MAP_KEY` |
 | `tencent_map.tencent_map_sk` | 腾讯位置服务 SecretKey（SK，可选），也可用环境变量 `TENCENT_MAP_SK` |
 | `tencent_map.place_search_keywords` | 随机地点搜索关键词列表 |
+| `tencent_map.place_search_retry_keywords` | 同一地区下关键词无结果时的重试数量 |
 | `tencent_map.place_search_page_size` | 每次搜索的候选 POI 数量，范围 1-20 |
 | `tencent_map.static_map_zoom` | 静态地图缩放级别，范围 4-18 |
 | `tencent_map.static_map_size` | 静态地图图片尺寸，例如 `500x400` |
+| `tencent_map.static_map_marker_style` | 静态地图位置标记样式，例如 `size:large|color:red` |
 | `tencent_map.tencent_api_timeout` | 腾讯地图接口超时时间，单位秒 |
 
 如果腾讯 Key 开启了 SN 校验，请填写 `tencent_map.tencent_map_sk`，插件会自动计算并追加 `sig`。如果 SK 留空，则按普通 WebService URL 直接调用。地图增强失败时会自动回退到本地随机地址，不影响原有文本和头像输出。
@@ -76,7 +78,7 @@ NullDox 是一个用于 AstrBot 的娱乐插件，通过生成虚构的用户信
 | **手机号** | 随机选择常用号段 + 8位随机数字 |
 | **IP地址** | 随机生成常用公网IP段（排除私有地址和保留地址） |
 | **地理位置** | 默认从内置行政区划数据库中随机选择；启用地图增强后，会在随机城市内搜索一个 POI |
-| **静态地图** | 根据随机 POI 坐标生成腾讯静态地图图片 |
+| **静态地图** | 根据随机 POI 坐标生成腾讯静态地图图片，并用 markers 标出位置 |
 | **QQ头像** | 使用 qlogo.cn API 获取真实头像 |
 
 ## 🛠️ 技术实现
