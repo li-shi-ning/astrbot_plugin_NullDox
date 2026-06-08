@@ -360,29 +360,51 @@ class NullDoxPlugin(Star):
         """生成一个随机的虚假地理位置，可选叠加真实POI和静态地图。"""
         fallback_address = self._generate_fallback_location()
         if not self._is_map_enrichment_enabled():
+            logger.info("[NullDox] 地图增强未启用，使用本地随机地址")
             return GeneratedLocation(fallback_address)
 
         api_key = self._get_tencent_map_key()
+        secret_key = self._get_tencent_map_sk()
+        logger.info(
+            "[NullDox] 地图增强已启用，"
+            f"key={self._mask_secret(api_key)}, sk_configured={bool(secret_key)}"
+        )
         if not api_key:
             logger.warning("[NullDox] 已启用地图增强，但未配置 tencent_map_key")
             return GeneratedLocation(fallback_address)
 
         region = self._pick_search_region()
         if not region:
+            logger.warning("[NullDox] 地图增强回退：未加载到可搜索地区")
             return GeneratedLocation(fallback_address)
+        logger.info(
+            f"[NullDox] 地图增强选择地区：search_region={region['region']}, "
+            f"fallback_prefix={region['prefix']}"
+        )
 
         poi = await self._search_random_poi(api_key, region["region"])
         if not poi:
+            logger.warning(
+                f"[NullDox] 地图增强回退：地区 {region['region']} 未搜索到有效POI"
+            )
             return GeneratedLocation(region["prefix"])
 
         address = self._format_poi_address(region["prefix"], poi)
         map_url = self._build_static_map_url(api_key, poi)
+        logger.info(
+            "[NullDox] 地图增强生成成功："
+            f"poi_id={poi.get('id')}, title={poi.get('title')}, "
+            f"address={address}, map_url_generated={bool(map_url)}"
+        )
         return GeneratedLocation(address, map_url)
 
     def _generate_fallback_location(self) -> str:
         """使用本地行政区数据生成离线虚构地址。"""
         if self.location_pool:
-            return random.choice(self.location_pool)
+            location = random.choice(self.location_pool)
+            logger.info(f"[NullDox] 本地随机地址：{location}")
+            return location
+        logger.warning("[NullDox] 本地地址池为空，使用默认地址")
         return "四川省成都市金牛区"  # 默认地址
 
     def _is_map_enrichment_enabled(self) -> bool:
@@ -408,6 +430,7 @@ class NullDoxPlugin(Star):
     def _pick_search_region(self) -> dict[str, str] | None:
         """随机选择一个用于地点搜索的城市/区县。"""
         if not self.search_region_pool:
+            logger.warning("[NullDox] 搜索地区池为空")
             return None
         return random.choice(self.search_region_pool)
 
@@ -417,6 +440,10 @@ class NullDoxPlugin(Star):
         """在随机地区内搜索一个POI。"""
         keyword = self._pick_place_keyword()
         page_size = self._get_int_config("place_search_page_size", 10, 1, 20)
+        logger.info(
+            f"[NullDox] 开始腾讯地点搜索：region={region_name}, "
+            f"keyword={keyword}, page_size={page_size}"
+        )
         params = {
             "key": api_key,
             "keyword": keyword,
@@ -426,6 +453,7 @@ class NullDoxPlugin(Star):
             "output": "json",
         }
         url = self._build_tencent_get_url(TENCENT_MAP_PLACE_SEARCH_PATH, params)
+        logger.info(f"[NullDox] 腾讯地点搜索URL：{self._redact_url(url)}")
 
         try:
             payload = await self._http_get_json(url)
@@ -435,29 +463,47 @@ class NullDoxPlugin(Star):
 
         if not isinstance(payload, dict) or payload.get("status") != 0:
             logger.warning(
-                f"[NullDox] 腾讯地点搜索返回异常：{payload.get('message') if isinstance(payload, dict) else payload}"
+                "[NullDox] 腾讯地点搜索返回异常："
+                f"payload={self._summarize_api_payload(payload)}"
             )
             return None
 
         pois = payload.get("data")
         if not isinstance(pois, list) or not pois:
+            logger.warning(
+                "[NullDox] 腾讯地点搜索无结果："
+                f"count={payload.get('count')}, request_id={payload.get('request_id')}"
+            )
             return None
         valid_pois = [poi for poi in pois if isinstance(poi, dict)]
         if not valid_pois:
+            logger.warning("[NullDox] 腾讯地点搜索结果格式异常：data中没有有效POI对象")
             return None
-        return random.choice(valid_pois)
+        selected = random.choice(valid_pois)
+        logger.info(
+            "[NullDox] 腾讯地点搜索命中："
+            f"request_id={payload.get('request_id')}, count={payload.get('count')}, "
+            f"valid_pois={len(valid_pois)}, selected_id={selected.get('id')}, "
+            f"selected_title={selected.get('title')}"
+        )
+        return selected
 
     def _pick_place_keyword(self) -> str:
         """从配置中选择搜索关键词。"""
         keywords = self._get_map_config("place_search_keywords", DEFAULT_PLACE_KEYWORDS)
         if not isinstance(keywords, list):
+            logger.warning("[NullDox] place_search_keywords 配置不是列表，使用默认关键词")
             keywords = DEFAULT_PLACE_KEYWORDS
         normalized = [str(item).strip() for item in keywords if str(item).strip()]
-        return random.choice(normalized or DEFAULT_PLACE_KEYWORDS)
+        if not normalized:
+            logger.warning("[NullDox] place_search_keywords 为空，使用默认关键词")
+            normalized = DEFAULT_PLACE_KEYWORDS
+        return random.choice(normalized)
 
     async def _http_get_json(self, url: str) -> dict:
         """在线程中执行阻塞HTTP请求，避免卡住AstrBot事件循环。"""
         timeout = self._get_int_config("tencent_api_timeout", 5, 1, 30)
+        logger.info(f"[NullDox] 发起HTTP请求：timeout={timeout}, url={self._redact_url(url)}")
 
         def _request() -> dict:
             request = urllib.request.Request(
@@ -467,6 +513,10 @@ class NullDoxPlugin(Star):
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 charset = response.headers.get_content_charset() or "utf-8"
                 body = response.read().decode(charset)
+                logger.info(
+                    f"[NullDox] HTTP响应：status={response.getcode()}, "
+                    f"charset={charset}, bytes={len(body.encode(charset, errors='ignore'))}"
+                )
             return json.loads(body)
 
         return await asyncio.to_thread(_request)
@@ -485,14 +535,19 @@ class NullDoxPlugin(Star):
         """根据POI坐标构造腾讯静态地图URL。"""
         location = poi.get("location")
         if not isinstance(location, dict):
+            logger.warning("[NullDox] 静态地图生成失败：POI缺少location对象")
             return None
         lat = location.get("lat")
         lng = location.get("lng")
         if lat is None or lng is None:
+            logger.warning("[NullDox] 静态地图生成失败：POI坐标缺少lat或lng")
             return None
 
         zoom = self._get_int_config("static_map_zoom", 17, 4, 18)
         size = str(self._get_map_config("static_map_size", "500x400")).strip() or "500x400"
+        logger.info(
+            f"[NullDox] 构造静态地图：lat={lat}, lng={lng}, zoom={zoom}, size={size}"
+        )
         params = {
             "key": api_key,
             "center": f"{lat},{lng}",
@@ -507,6 +562,9 @@ class NullDoxPlugin(Star):
         secret_key = self._get_tencent_map_sk()
         if secret_key:
             request_params["sig"] = self._sign_tencent_get(path, params, secret_key)
+            logger.info(f"[NullDox] 腾讯URL启用SN签名：path={path}")
+        else:
+            logger.info(f"[NullDox] 腾讯URL未启用SN签名：path={path}")
         query = urllib.parse.urlencode(request_params)
         return f"{TENCENT_MAP_API_BASE}{path}?{query}"
 
@@ -518,7 +576,12 @@ class NullDoxPlugin(Star):
             f"{key}={params[key]}" for key in sorted(params.keys())
         )
         source = f"{path}?{raw_query}{secret_key}"
-        return hashlib.md5(source.encode("utf-8")).hexdigest()
+        signature = hashlib.md5(source.encode("utf-8")).hexdigest()
+        logger.info(
+            f"[NullDox] 腾讯SN签名完成：path={path}, params={sorted(params.keys())}, "
+            f"sig={self._mask_secret(signature)}"
+        )
+        return signature
 
     def _get_map_config(self, key: str, default=None):
         """读取地图增强配置，优先使用 tencent_map 对象，兼容旧扁平字段。"""
@@ -527,7 +590,44 @@ class NullDoxPlugin(Star):
             value = tencent_map.get(key, None)
             if value is not None:
                 return value
-        return self.config.get(key, default)
+        value = self.config.get(key, default)
+        if key in self.config:
+            logger.info(f"[NullDox] 使用旧版扁平地图配置：{key}")
+        return value
+
+    def _mask_secret(self, value: str) -> str:
+        """遮蔽敏感配置，仅保留少量排查信息。"""
+        if not value:
+            return "<empty>"
+        if len(value) <= 8:
+            return f"{value[:2]}***"
+        return f"{value[:4]}***{value[-4:]}"
+
+    def _redact_url(self, url: str) -> str:
+        """遮蔽URL中的key和sig，便于安全打印日志。"""
+        parsed = urllib.parse.urlsplit(url)
+        pairs = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+        redacted_pairs = []
+        for key, value in pairs:
+            if key in {"key", "sig"}:
+                value = self._mask_secret(value)
+            redacted_pairs.append((key, value))
+        query = urllib.parse.urlencode(redacted_pairs)
+        return urllib.parse.urlunsplit(
+            (parsed.scheme, parsed.netloc, parsed.path, query, parsed.fragment)
+        )
+
+    def _summarize_api_payload(self, payload) -> str:
+        """压缩腾讯API返回内容，避免日志过长。"""
+        if not isinstance(payload, dict):
+            return repr(payload)[:300]
+        summary = {
+            "status": payload.get("status"),
+            "message": payload.get("message"),
+            "count": payload.get("count"),
+            "request_id": payload.get("request_id"),
+        }
+        return json.dumps(summary, ensure_ascii=False)
 
     def _get_int_config(
         self, key: str, default: int, minimum: int, maximum: int
