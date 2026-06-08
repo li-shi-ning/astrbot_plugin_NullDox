@@ -1,5 +1,11 @@
+import asyncio
+import hashlib
 import json
+import os
 import random
+import urllib.parse
+import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 
 import astrbot.api.message_components as Comp
@@ -10,6 +16,21 @@ from astrbot.core.config import AstrBotConfig
 from astrbot.core.star.filter import HandlerFilter
 from astrbot.core.star.register.star_handler import get_handler_or_create
 from astrbot.core.star.star_handler import EventType
+
+
+TENCENT_MAP_API_BASE = "https://apis.map.qq.com"
+TENCENT_MAP_PLACE_SEARCH_PATH = "/ws/place/v1/search"
+TENCENT_MAP_STATIC_PATH = "/ws/staticmap/v2/"
+DEFAULT_PLACE_KEYWORDS = ["公园", "商场", "酒店", "学校", "医院", "地铁站", "景点", "美食"]
+
+
+@dataclass(frozen=True)
+class GeneratedLocation:
+    """一次虚构地址生成的结果。"""
+
+    address: str
+    map_url: str | None = None
+
 
 class DecreaseTypeFilter(HandlerFilter):
     """检查活跃的群成员减少通知事件"""
@@ -35,7 +56,7 @@ def register_decrease_type(**kwargs):
     "NullDox",
     "lishining",
     "生成虚假用户信息，仅供娱乐。",
-    "1.0.0",
+    "1.0.4",
 )
 class NullDoxPlugin(Star):
     """开盒插件：生成虚假的用户信息"""
@@ -45,6 +66,7 @@ class NullDoxPlugin(Star):
         self.config = config or {}
         self.location_data: dict = {}
         self.location_pool: list[str] = []
+        self.search_region_pool: list[dict[str, str]] = []
         self._load_location_data()
 
     @filter.command("盒")
@@ -68,12 +90,14 @@ class NullDoxPlugin(Star):
         else:
             qq = target_id
         yield event.plain_result(f"🚨 开始对 {qq} 进行盒打击")
-        output_text = self.generate_fake_dox(qq)
+        output_text, map_url = await self.generate_fake_dox(qq)
         avatar = f"https://q4.qlogo.cn/headimg_dl?dst_uin={qq}&spec=640"
         chain = [
             Comp.Plain(output_text),
             Comp.Image.fromURL(avatar),
         ]
+        if map_url:
+            chain.append(Comp.Image.fromURL(map_url))
         yield event.chain_result(chain)
 
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
@@ -91,21 +115,26 @@ class NullDoxPlugin(Star):
             return
 
         yield event.plain_result(f"🚨 检测到 {sender_id} 退出群聊，正在进行开盒")
-        output_text = self.generate_fake_dox(sender_id, str(group_id))
+        output_text, map_url = await self.generate_fake_dox(sender_id, str(group_id))
         avatar = f"https://q4.qlogo.cn/headimg_dl?dst_uin={sender_id}&spec=640"
         chain = [
             Comp.Plain(output_text),
             Comp.Image.fromURL(avatar),
         ]
+        if map_url:
+            chain.append(Comp.Image.fromURL(map_url))
         yield event.chain_result(chain)
 
     # 生成假数据
-    def generate_fake_dox(self, sender_id: str, group_id: str | None = None):
+    async def generate_fake_dox(
+        self, sender_id: str, group_id: str | None = None
+    ) -> tuple[str, str | None]:
         """
         生成完整的假开盒信息
         sender_id: 发送者账号
         group_id: 群号（可选）
         """
+        location = await self._generate_location()
         output = f"🔍 身份检索完毕\n"
         output += f"🆔 账号：{sender_id}\n"
 
@@ -114,9 +143,11 @@ class NullDoxPlugin(Star):
 
         output += f"📱 手机：{self._generate_phone()}\n"
         output += f"🌐 IP地址：{self._generate_ip()}\n"
-        output += f"📍 物理地址：{self._generate_location()}"
+        output += f"📍 物理地址：{location.address}"
+        if location.map_url:
+            output += "\n🗺️ 已生成位置静态图"
 
-        return output.strip()
+        return output.strip(), location.map_url
 
     # 加载地理位置JSON数据
     def _load_location_data(self) -> None:
@@ -136,6 +167,7 @@ class NullDoxPlugin(Star):
                 return
 
             self.location_pool = self._flatten_locations(self.location_data)
+            self.search_region_pool = self._flatten_search_regions(self.location_data)
             logger.info(
                 f"[NullDox] 已加载 {len(self.location_pool)} 条地理位置数据"
             )
@@ -143,10 +175,12 @@ class NullDoxPlugin(Star):
             logger.error(f"[NullDox] 解析地理位置JSON失败：{exc}")
             self.location_data = {}
             self.location_pool = []
+            self.search_region_pool = []
         except Exception as exc:
             logger.error(f"[NullDox] 加载地理位置数据失败：{exc}")
             self.location_data = {}
             self.location_pool = []
+            self.search_region_pool = []
 
     # 将嵌套的地理位置JSON展开为可读地址列表
     def _flatten_locations(self, data: dict) -> list[str]:
@@ -179,6 +213,47 @@ class NullDoxPlugin(Star):
                             )
 
         return locations
+
+    def _flatten_search_regions(self, data: dict) -> list[dict[str, str]]:
+        """展开地区数据，保留适合腾讯地点搜索的城市/区县边界。"""
+        regions: list[dict[str, str]] = []
+        for provinces in data.values():
+            if not isinstance(provinces, dict):
+                continue
+
+            for province_name, cities in provinces.items():
+                if not isinstance(cities, dict):
+                    continue
+
+                for city_name, districts in cities.items():
+                    if not isinstance(districts, dict) or not districts:
+                        regions.append(
+                            {
+                                "region": str(city_name),
+                                "prefix": f"{province_name}{city_name}",
+                            }
+                        )
+                        continue
+
+                    for district_name, streets in districts.items():
+                        street_name = self._pick_street_name(streets)
+                        prefix = f"{province_name}{city_name}{district_name}"
+                        if street_name:
+                            prefix += street_name
+                        regions.append(
+                            {
+                                "region": str(city_name),
+                                "prefix": prefix,
+                            }
+                        )
+
+        return regions
+
+    def _pick_street_name(self, streets: object) -> str:
+        """从街道字典中随机取一个街道名，用于拼出更完整的虚构地址。"""
+        if not isinstance(streets, dict) or not streets:
+            return ""
+        return str(random.choice(list(streets.keys())))
 
     # 验证QQ号格式是否正确
     def _validate_qq(self, qq: str) -> bool:
@@ -281,11 +356,188 @@ class NullDoxPlugin(Star):
         return f"{first}.{second}.{third}.{fourth}"
 
     # 生成一个随机的虚假地理位置
-    def _generate_location(self) -> str:
-        """生成一个随机的虚假地理位置"""
+    async def _generate_location(self) -> GeneratedLocation:
+        """生成一个随机的虚假地理位置，可选叠加真实POI和静态地图。"""
+        fallback_address = self._generate_fallback_location()
+        if not self._is_map_enrichment_enabled():
+            return GeneratedLocation(fallback_address)
+
+        api_key = self._get_tencent_map_key()
+        if not api_key:
+            logger.warning("[NullDox] 已启用地图增强，但未配置 tencent_map_key")
+            return GeneratedLocation(fallback_address)
+
+        region = self._pick_search_region()
+        if not region:
+            return GeneratedLocation(fallback_address)
+
+        poi = await self._search_random_poi(api_key, region["region"])
+        if not poi:
+            return GeneratedLocation(region["prefix"])
+
+        address = self._format_poi_address(region["prefix"], poi)
+        map_url = self._build_static_map_url(api_key, poi)
+        return GeneratedLocation(address, map_url)
+
+    def _generate_fallback_location(self) -> str:
+        """使用本地行政区数据生成离线虚构地址。"""
         if self.location_pool:
             return random.choice(self.location_pool)
         return "四川省成都市金牛区"  # 默认地址
+
+    def _is_map_enrichment_enabled(self) -> bool:
+        """是否启用腾讯地图地点搜索与静态图增强。"""
+        return bool(self._get_map_config("enable_static_map", False))
+
+    def _get_tencent_map_key(self) -> str:
+        """优先读取插件配置，其次读取环境变量，避免把密钥写进代码。"""
+        return str(
+            self._get_map_config("tencent_map_key", "")
+            or os.getenv("TENCENT_MAP_KEY")
+            or ""
+        ).strip()
+
+    def _get_tencent_map_sk(self) -> str:
+        """读取腾讯位置服务 SecretKey；为空时不启用 SN 签名。"""
+        return str(
+            self._get_map_config("tencent_map_sk", "")
+            or os.getenv("TENCENT_MAP_SK")
+            or ""
+        ).strip()
+
+    def _pick_search_region(self) -> dict[str, str] | None:
+        """随机选择一个用于地点搜索的城市/区县。"""
+        if not self.search_region_pool:
+            return None
+        return random.choice(self.search_region_pool)
+
+    async def _search_random_poi(
+        self, api_key: str, region_name: str
+    ) -> dict | None:
+        """在随机地区内搜索一个POI。"""
+        keyword = self._pick_place_keyword()
+        page_size = self._get_int_config("place_search_page_size", 10, 1, 20)
+        params = {
+            "key": api_key,
+            "keyword": keyword,
+            "boundary": f"region({region_name},1)",
+            "page_size": str(page_size),
+            "page_index": "1",
+            "output": "json",
+        }
+        url = self._build_tencent_get_url(TENCENT_MAP_PLACE_SEARCH_PATH, params)
+
+        try:
+            payload = await self._http_get_json(url)
+        except Exception as exc:
+            logger.warning(f"[NullDox] 腾讯地点搜索失败：{exc}")
+            return None
+
+        if not isinstance(payload, dict) or payload.get("status") != 0:
+            logger.warning(
+                f"[NullDox] 腾讯地点搜索返回异常：{payload.get('message') if isinstance(payload, dict) else payload}"
+            )
+            return None
+
+        pois = payload.get("data")
+        if not isinstance(pois, list) or not pois:
+            return None
+        valid_pois = [poi for poi in pois if isinstance(poi, dict)]
+        if not valid_pois:
+            return None
+        return random.choice(valid_pois)
+
+    def _pick_place_keyword(self) -> str:
+        """从配置中选择搜索关键词。"""
+        keywords = self._get_map_config("place_search_keywords", DEFAULT_PLACE_KEYWORDS)
+        if not isinstance(keywords, list):
+            keywords = DEFAULT_PLACE_KEYWORDS
+        normalized = [str(item).strip() for item in keywords if str(item).strip()]
+        return random.choice(normalized or DEFAULT_PLACE_KEYWORDS)
+
+    async def _http_get_json(self, url: str) -> dict:
+        """在线程中执行阻塞HTTP请求，避免卡住AstrBot事件循环。"""
+        timeout = self._get_int_config("tencent_api_timeout", 5, 1, 30)
+
+        def _request() -> dict:
+            request = urllib.request.Request(
+                url,
+                headers={"User-Agent": "astrbot-plugin-nulldox/1.0"},
+            )
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                charset = response.headers.get_content_charset() or "utf-8"
+                body = response.read().decode(charset)
+            return json.loads(body)
+
+        return await asyncio.to_thread(_request)
+
+    def _format_poi_address(self, region_prefix: str, poi: dict) -> str:
+        """把POI结果格式化为更像真实地点的虚构地址。"""
+        title = str(poi.get("title") or "").strip()
+        address = str(poi.get("address") or "").strip()
+        if address and title:
+            return f"{address}（{title}）"
+        if title:
+            return f"{region_prefix}{title}"
+        return address or region_prefix
+
+    def _build_static_map_url(self, api_key: str, poi: dict) -> str | None:
+        """根据POI坐标构造腾讯静态地图URL。"""
+        location = poi.get("location")
+        if not isinstance(location, dict):
+            return None
+        lat = location.get("lat")
+        lng = location.get("lng")
+        if lat is None or lng is None:
+            return None
+
+        zoom = self._get_int_config("static_map_zoom", 17, 4, 18)
+        size = str(self._get_map_config("static_map_size", "500x400")).strip() or "500x400"
+        params = {
+            "key": api_key,
+            "center": f"{lat},{lng}",
+            "zoom": str(zoom),
+            "size": size,
+        }
+        return self._build_tencent_get_url(TENCENT_MAP_STATIC_PATH, params)
+
+    def _build_tencent_get_url(self, path: str, params: dict[str, str]) -> str:
+        """构造腾讯 WebService GET URL；配置了 SK 时自动追加 sig。"""
+        request_params = dict(params)
+        secret_key = self._get_tencent_map_sk()
+        if secret_key:
+            request_params["sig"] = self._sign_tencent_get(path, params, secret_key)
+        query = urllib.parse.urlencode(request_params)
+        return f"{TENCENT_MAP_API_BASE}{path}?{query}"
+
+    def _sign_tencent_get(
+        self, path: str, params: dict[str, str], secret_key: str
+    ) -> str:
+        """按腾讯 SN 校验规则计算 GET 请求签名。"""
+        raw_query = "&".join(
+            f"{key}={params[key]}" for key in sorted(params.keys())
+        )
+        source = f"{path}?{raw_query}{secret_key}"
+        return hashlib.md5(source.encode("utf-8")).hexdigest()
+
+    def _get_map_config(self, key: str, default=None):
+        """读取地图增强配置，优先使用 tencent_map 对象，兼容旧扁平字段。"""
+        tencent_map = self.config.get("tencent_map", {})
+        if hasattr(tencent_map, "get"):
+            value = tencent_map.get(key, None)
+            if value is not None:
+                return value
+        return self.config.get(key, default)
+
+    def _get_int_config(
+        self, key: str, default: int, minimum: int, maximum: int
+    ) -> int:
+        """读取并限制整数配置范围。"""
+        try:
+            value = int(self._get_map_config(key, default))
+        except (TypeError, ValueError):
+            return default
+        return max(minimum, min(maximum, value))
 
     # 异步插件初始化钩子
     async def initialize(self):

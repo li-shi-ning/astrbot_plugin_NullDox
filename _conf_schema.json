@@ -38,5 +38,72 @@
     "items": {
       "type": "string"
     }
+  },
+  "tencent_map": {
+    "description": "腾讯地图地点搜索与静态地图增强",
+    "type": "object",
+    "hint": "腾讯位置服务 WebService API 相关配置。填写 SK 时会按 SN 校验规则自动签名；不填写 SK 时直接调用。",
+    "items": {
+      "enable_static_map": {
+        "description": "启用腾讯地图地点搜索与静态地图增强",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后会先随机生成地区，再调用腾讯位置服务搜索真实POI，并附加一张静态地图图片。未配置Key或接口失败时会自动回退为本地随机地址。"
+      },
+      "tencent_map_key": {
+        "description": "腾讯位置服务 WebService API Key",
+        "type": "string",
+        "default": "",
+        "hint": "需要在腾讯位置服务控制台创建并开启 WebServiceAPI。也可通过环境变量 TENCENT_MAP_KEY 提供。"
+      },
+      "tencent_map_sk": {
+        "description": "腾讯位置服务 SecretKey（SK，可选）",
+        "type": "string",
+        "default": "",
+        "hint": "仅在 Key 开启 SN 校验时填写。填写后插件会自动计算 sig；留空则按普通方式直接调用。也可通过环境变量 TENCENT_MAP_SK 提供。"
+      },
+      "place_search_keywords": {
+        "description": "随机地点搜索关键词列表",
+        "type": "list",
+        "default": [
+          "公园",
+          "商场",
+          "酒店",
+          "学校",
+          "医院",
+          "地铁站",
+          "景点",
+          "美食"
+        ],
+        "hint": "每次会从列表中随机选一个关键词，在随机城市内搜索地点。建议每个关键词只写一个检索词。",
+        "items": {
+          "type": "string"
+        }
+      },
+      "place_search_page_size": {
+        "description": "地点搜索候选数量",
+        "type": "int",
+        "default": 10,
+        "hint": "每次搜索返回的候选POI数量，范围1-20，插件会从候选中随机选一个。"
+      },
+      "static_map_zoom": {
+        "description": "静态地图缩放级别",
+        "type": "int",
+        "default": 17,
+        "hint": "腾讯静态图缩放级别，范围4-18。"
+      },
+      "static_map_size": {
+        "description": "静态地图图片尺寸",
+        "type": "string",
+        "default": "500x400",
+        "hint": "格式为 宽x高，例如 500x400。"
+      },
+      "tencent_api_timeout": {
+        "description": "腾讯地图接口超时时间",
+        "type": "int",
+        "default": 5,
+        "hint": "单位秒，范围1-30。"
+      }
+    }
   }
 }
