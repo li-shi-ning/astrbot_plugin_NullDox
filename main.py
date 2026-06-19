@@ -83,12 +83,14 @@ class NullDoxPlugin(Star):
             yield event.plain_result("当前账号未启用该功能")
             return
 
-        target_id = self._resolve_target_qq(event, qq)
+        target_id, target_name = self._resolve_target(event, qq)
         if not target_id:
             yield event.plain_result("QQ号格式错误，请使用纯数字或@目标用户")
             return
 
-        yield event.chain_result(self._build_random_sentence_chain(event, target_id))
+        yield event.chain_result(
+            self._build_random_sentence_chain(event, target_id, target_name)
+        )
 
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
     @register_decrease_type()
@@ -106,19 +108,26 @@ class NullDoxPlugin(Star):
             return
 
         yield event.chain_result(
-            self._build_random_sentence_chain(event, target_id, str(group_id))
+            self._build_random_sentence_chain(event, target_id, group_id=str(group_id))
         )
 
     def _build_random_sentence_chain(
         self,
         event: AstrMessageEvent,
         user_id: str,
+        user_name: str | None = None,
         group_id: str | None = None,
     ) -> list:
         sentence = self._pick_sentence(group_id or self._event_group_id(event))
         avatar = f"https://q4.qlogo.cn/headimg_dl?dst_uin={user_id}&spec=640"
+        display_name = self._normalize_display_name(user_name)
+        identity_text = (
+            f"用户:{display_name}(ID:{user_id})"
+            if display_name and display_name != user_id
+            else f"ID:{user_id}"
+        )
         return [
-            Comp.Plain(f"用户:{user_id}(ID:{user_id})[{sentence}]\n"),
+            Comp.Plain(f"{identity_text}\n{sentence}\n"),
             Comp.Image.fromURL(avatar),
         ]
 
@@ -174,39 +183,43 @@ class NullDoxPlugin(Star):
             return []
         return [item for raw in value if (item := str(raw).strip())]
 
-    def _resolve_target_qq(self, event: AstrMessageEvent, qq: str = "") -> str | None:
+    def _resolve_target(
+        self, event: AstrMessageEvent, qq: str = ""
+    ) -> tuple[str | None, str | None]:
         """解析目标：显式QQ优先，其次非bot @，再其次bot @，最后发送者。"""
 
         qq_candidate = str(qq or "").strip()
         if qq_candidate:
             if self._validate_qq(qq_candidate):
                 logger.info("[NullDox] 目标解析：使用显式QQ参数 %s", qq_candidate)
-                return qq_candidate
+                return qq_candidate, None
             logger.warning("[NullDox] 目标解析：显式QQ参数无效 %s", qq_candidate)
 
         mention_targets = self._extract_target_mentions(event)
         if mention_targets["non_bot"]:
-            target_id = mention_targets["non_bot"][-1]
+            target_id, target_name = mention_targets["non_bot"][-1]
             logger.info("[NullDox] 目标解析：使用最后一个非bot @目标 %s", target_id)
-            return target_id
+            return target_id, target_name
         if mention_targets["bot"]:
-            target_id = mention_targets["bot"][-1]
+            target_id, target_name = mention_targets["bot"][-1]
             logger.info("[NullDox] 目标解析：使用bot自身@目标 %s", target_id)
-            return target_id
+            return target_id, target_name
 
         sender_id = str(event.get_sender_id() or "").strip()
         if self._validate_qq(sender_id):
             logger.info("[NullDox] 目标解析：无显式目标，回退到发送者 %s", sender_id)
-            return sender_id
+            return sender_id, self._event_sender_name(event)
 
         logger.warning("[NullDox] 目标解析失败：未找到有效目标")
-        return None
+        return None, None
 
-    def _extract_target_mentions(self, event: AstrMessageEvent) -> dict[str, list[str]]:
+    def _extract_target_mentions(
+        self, event: AstrMessageEvent
+    ) -> dict[str, list[tuple[str, str | None]]]:
         """提取消息中的@目标，分别记录bot自身和非bot目标。"""
 
         self_ids = self._get_bot_self_ids(event)
-        targets: dict[str, list[str]] = {"non_bot": [], "bot": []}
+        targets: dict[str, list[tuple[str, str | None]]] = {"non_bot": [], "bot": []}
         for component in event.message_obj.message:
             if not isinstance(component, Comp.At):
                 continue
@@ -217,11 +230,14 @@ class NullDoxPlugin(Star):
             if not self._validate_qq(mentioned_id):
                 logger.warning("[NullDox] 目标解析：跳过无效@目标 %s", mentioned_id)
                 continue
+            mentioned_name = self._normalize_display_name(
+                getattr(component, "name", None)
+            )
             if mentioned_id in self_ids:
                 logger.info("[NullDox] 目标解析：记录bot自身@ %s", mentioned_id)
-                targets["bot"].append(mentioned_id)
+                targets["bot"].append((mentioned_id, mentioned_name))
                 continue
-            targets["non_bot"].append(mentioned_id)
+            targets["non_bot"].append((mentioned_id, mentioned_name))
         return targets
 
     def _get_bot_self_ids(self, event: AstrMessageEvent) -> set[str]:
@@ -248,6 +264,24 @@ class NullDoxPlugin(Star):
                 if self_id:
                     self_ids.add(str(self_id))
         return self_ids
+
+    def _event_sender_name(self, event: AstrMessageEvent) -> str:
+        get_sender_name = getattr(event, "get_sender_name", None)
+        if callable(get_sender_name):
+            try:
+                return self._normalize_display_name(get_sender_name())
+            except Exception as exc:
+                logger.debug("[NullDox] 读取 event.get_sender_name 失败: %s", exc)
+
+        sender = getattr(getattr(event, "message_obj", None), "sender", None)
+        return self._normalize_display_name(getattr(sender, "nickname", None))
+
+    @staticmethod
+    def _normalize_display_name(value) -> str:
+        name = str(value or "").strip()
+        if not name or name.upper() == "N/A":
+            return ""
+        return name
 
     @staticmethod
     def _event_group_id(event: AstrMessageEvent) -> str:
